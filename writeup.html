@@ -100,7 +100,7 @@
     Reading from the inside out: the audio source is brown noise passed through a
     400 Hz low-pass filter, which removes the brighter high-frequency content and
     gives a warmer, denser texture. A second independent brown noise signal is
-    low-pass filtered at 14 Hz — far too slow to be heard as pitched audio, so it
+    low-pass filtered at 14 Hz, far too slow to be heard as pitched audio, so it
     becomes a slowly wandering control signal. Scaled by 400 and offset by 500, it
     produces a frequency that drifts roughly between 100 and 900 Hz. This drives the
     cutoff of the resonant high-pass filter (RHPF), which sweeps through the audio
@@ -170,7 +170,7 @@
   </p>
 
   <p>
-    Drops are scheduled using a Poisson process — inter-arrival times are drawn from
+    Drops are scheduled using a Poisson process, inter-arrival times are drawn from
     an exponential distribution with mean <code>1/rate</code> seconds. This avoids
     the mechanical regularity of a fixed timer and better matches the statistical
     character of natural rainfall.
@@ -208,7 +208,7 @@
   <h2>Synthesis types and design choices</h2>
 
   <p>
-    Both parts use <strong>subtractive synthesis</strong> — starting from
+    Both parts use <strong>subtractive synthesis</strong> ,starting from
     spectrally rich noise sources and carving out the desired character with
     filters. For Part I, the brown noise source was already specified; its
     lower spectral density compared to white noise gives a warmer, less harsh
@@ -221,7 +221,7 @@
     (sometimes called filter FM or LFO-driven filtering), where a second noise
     signal at sub-audio rate becomes a control voltage for the RHPF cutoff. This
     creates the characteristic gurgling motion without any explicit timing or
-    rhythm — it emerges from the randomness of the noise itself.
+    rhythm, it emerges from the randomness of the noise itself.
   </p>
 
   <p>
@@ -229,14 +229,14 @@
     implemented simply: each drop is a short grain with its own envelope and
     filter settings, triggered stochastically. The Poisson scheduling is a
     deliberate choice over a fixed-rate timer because real rainfall has no
-    underlying pulse — grains arrive randomly and occasionally cluster.
+    underlying pulse, grains arrive randomly and occasionally cluster.
   </p>
 
   <p>
     One thing I found interesting: if you increase the drop rate high enough in
     Part II, the individual events become indistinguishable and the sound
     approaches the continuous noise wash of the background layer. The two layers
-    converge. That emergent behavior wasn't planned — it just falls out of the
+    converge. That emergent behavior wasn't planned, it just falls out of the
     physical model naturally.
   </p>
 
