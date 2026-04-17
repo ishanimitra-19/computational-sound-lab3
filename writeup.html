@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Writeup – Lab 3</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: 'Courier New', monospace;
+      padding: 60px 24px;
+      max-width: 680px;
+      margin: 0 auto;
+      line-height: 1.75;
+    }
+    .back { font-size: 11px; color: #7d8590; text-decoration: none; letter-spacing: 0.08em; }
+    .back:hover { color: #58a6ff; }
+    h1 {
+      font-size: 22px;
+      font-weight: 400;
+      color: #e6edf3;
+      margin: 32px 0 8px;
+      letter-spacing: -0.01em;
+    }
+    .meta { font-size: 11px; color: #484f58; margin-bottom: 40px; letter-spacing: 0.08em; }
+    h2 {
+      font-size: 13px;
+      font-weight: 400;
+      color: #7d8590;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin: 40px 0 12px;
+    }
+    p { font-size: 14px; color: #c9d1d9; margin-bottom: 16px; }
+    code {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: #79c0ff;
+      background: #161b22;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    pre {
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 16px;
+      font-size: 12px;
+      color: #c9d1d9;
+      overflow-x: auto;
+      margin: 16px 0;
+      line-height: 1.6;
+    }
+    .diagram {
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 24px;
+      margin: 16px 0;
+      font-size: 12px;
+      color: #7d8590;
+      line-height: 2;
+    }
+    .diagram .node {
+      display: inline-block;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 2px 10px;
+      color: #e6edf3;
+      font-size: 11px;
+    }
+    .diagram .node.mod { border-color: #e3b341; color: #e3b341; }
+    .diagram .arrow { color: #484f58; margin: 0 4px; }
+    .diagram .label { color: #484f58; font-size: 10px; letter-spacing: 0.08em; display: block; margin-bottom: 6px; }
+    .divider { height: 1px; background: #21262d; margin: 40px 0; }
+  </style>
+</head>
+<body>
+
+  <a class="back" href="index.html">← back</a>
+
+  <h1>Lab 3 Writeup — Procedural Sound Synthesis</h1>
+  <div class="meta">WORKING WITH: [YOUR PARTNER'S NAME] &nbsp;|&nbsp; PART I &nbsp;|&nbsp; PART II: RAIN</div>
+
+  <!-- ── PART I ─────────────────────────────────────────────────────────────── -->
+
+  <h2>Part I — Babbling Brook</h2>
+
+  <p>
+    The original SuperCollider program produces a bubbling, brook-like sound using
+    a resonant high-pass filter whose cutoff frequency is continuously modulated by
+    a second, slowly-varying noise signal:
+  </p>
+
+  <pre>{RHPF.ar(LPF.ar(BrownNoise.ar(), 400), LPF.ar(BrownNoise.ar(), 14) * 400 + 500, 0.03, 0.1)}.play</pre>
+
+  <p>
+    Reading from the inside out: the audio source is brown noise passed through a
+    400 Hz low-pass filter, which removes the brighter high-frequency content and
+    gives a warmer, denser texture. A second independent brown noise signal is
+    low-pass filtered at 14 Hz — far too slow to be heard as pitched audio, so it
+    becomes a slowly wandering control signal. Scaled by 400 and offset by 500, it
+    produces a frequency that drifts roughly between 100 and 900 Hz. This drives the
+    cutoff of the resonant high-pass filter (RHPF), which sweeps through the audio
+    signal and creates the gurgling character.
+  </p>
+
+  <h2>Signal flow — Part I</h2>
+
+  <div class="diagram">
+    <span class="label">AUDIO PATH</span>
+    <span class="node">BrownNoise #1</span>
+    <span class="arrow">→</span>
+    <span class="node">LPF 400 Hz</span>
+    <span class="arrow">→</span>
+    <span class="node">RHPF</span>
+    <span class="arrow">→</span>
+    <span class="node">GainNode 0.1</span>
+    <span class="arrow">→</span>
+    <span class="node">destination</span>
+    <br><br>
+    <span class="label">MODULATION PATH (→ RHPF frequency param)</span>
+    <span class="node mod">BrownNoise #2</span>
+    <span class="arrow">→</span>
+    <span class="node mod">LPF 14 Hz</span>
+    <span class="arrow">→</span>
+    <span class="node mod">GainNode ×400</span>
+    <span class="arrow">→</span>
+    <span class="node mod">rhpf.frequency</span>
+    <br>
+    <span class="node mod" style="margin-left:2px">ConstantSource 500</span>
+    <span class="arrow">→</span>
+    <span class="node mod">rhpf.frequency</span>
+  </div>
+
+  <p>
+    The main challenge in translating this to Web Audio was implementing the
+    arithmetic <code>* 400 + 500</code> on an audio signal. Web Audio's
+    <code>AudioParam</code> interface accepts node connections and sums all connected
+    signals automatically. So instead of computing the expression directly, I
+    connected a <code>GainNode</code> (handling the ×400 scaling) and a
+    <code>ConstantSourceNode</code> (providing the +500 DC offset) both to
+    <code>rhpf.frequency</code>. Web Audio adds them together, which is exactly
+    what the SuperCollider expression does.
+  </p>
+
+  <div class="divider"></div>
+
+  <!-- ── PART II ────────────────────────────────────────────────────────────── -->
+
+  <h2>Part II — Rain / Water Drops</h2>
+
+  <p>
+    For Part II I chose to synthesize rain, drawing from Farnell's physical
+    description of water drops impacting a surface. The core observation is that
+    rain has two distinct perceptual layers: individual drop impacts, which are
+    short transient events with a tonal character, and a continuous background wash
+    that emerges as drop density increases.
+  </p>
+
+  <p>
+    I modeled each drop as a white noise burst passed through a tight bandpass
+    filter, shaped with an instant-attack / exponential-decay gain envelope. The
+    bandpass filter gives each drop a pitched quality (the resonance of the water
+    surface), while the decay envelope replicates the physical damping. Per-drop
+    randomization in frequency (±30%), gain (±40%), and decay time (±50%) ensures
+    no two drops sound identical.
+  </p>
+
+  <p>
+    Drops are scheduled using a Poisson process — inter-arrival times are drawn from
+    an exponential distribution with mean <code>1/rate</code> seconds. This avoids
+    the mechanical regularity of a fixed timer and better matches the statistical
+    character of natural rainfall.
+  </p>
+
+  <p>
+    The background layer is simply white noise run through a low-pass filter at
+    around 2 kHz, kept at a low gain. At high drop rates the two layers blend
+    convincingly into continuous rain; at low rates the individual drops are
+    clearly audible.
+  </p>
+
+  <h2>Signal flow — Part II</h2>
+
+  <div class="diagram">
+    <span class="label">PER-DROP PATH (triggered ~30×/sec by Poisson scheduler)</span>
+    <span class="node">WhiteNoise burst</span>
+    <span class="arrow">→</span>
+    <span class="node">BPF ~2 kHz, Q=8</span>
+    <span class="arrow">→</span>
+    <span class="node">GainNode (envelope)</span>
+    <span class="arrow">→</span>
+    <span class="node">destination</span>
+    <br><br>
+    <span class="label">BACKGROUND WASH PATH</span>
+    <span class="node">WhiteNoise (looped)</span>
+    <span class="arrow">→</span>
+    <span class="node">LPF 2 kHz</span>
+    <span class="arrow">→</span>
+    <span class="node">GainNode 0.08</span>
+    <span class="arrow">→</span>
+    <span class="node">destination</span>
+  </div>
+
+  <h2>Synthesis types and design choices</h2>
+
+  <p>
+    Both parts use <strong>subtractive synthesis</strong> — starting from
+    spectrally rich noise sources and carving out the desired character with
+    filters. For Part I, the brown noise source was already specified; its
+    lower spectral density compared to white noise gives a warmer, less harsh
+    starting texture. For Part II, white noise was more appropriate because
+    individual water drops contain a broad, bright transient.
+  </p>
+
+  <p>
+    Part I additionally uses <strong>frequency modulation of a filter</strong>
+    (sometimes called filter FM or LFO-driven filtering), where a second noise
+    signal at sub-audio rate becomes a control voltage for the RHPF cutoff. This
+    creates the characteristic gurgling motion without any explicit timing or
+    rhythm — it emerges from the randomness of the noise itself.
+  </p>
+
+  <p>
+    Part II uses a form of <strong>granular synthesis</strong> in spirit, though
+    implemented simply: each drop is a short grain with its own envelope and
+    filter settings, triggered stochastically. The Poisson scheduling is a
+    deliberate choice over a fixed-rate timer because real rainfall has no
+    underlying pulse — grains arrive randomly and occasionally cluster.
+  </p>
+
+  <p>
+    One thing I found interesting: if you increase the drop rate high enough in
+    Part II, the individual events become indistinguishable and the sound
+    approaches the continuous noise wash of the background layer. The two layers
+    converge. That emergent behavior wasn't planned — it just falls out of the
+    physical model naturally.
+  </p>
+
+</body>
+</html>

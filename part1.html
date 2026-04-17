@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Part I – Babbling Brook</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 28px;
+      padding: 40px;
+    }
+    .back { align-self: flex-start; font-size: 11px; color: #7d8590; text-decoration: none; letter-spacing: 0.08em; }
+    .back:hover { color: #58a6ff; }
+    h1 { font-size: 13px; letter-spacing: 0.15em; text-transform: uppercase; color: #7d8590; font-weight: 400; }
+    #play-btn {
+      width: 80px; height: 80px; border-radius: 50%;
+      border: 1.5px solid #30363d; background: transparent;
+      color: #e6edf3; font-size: 22px; cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #play-btn:hover { border-color: #58a6ff; background: rgba(88,166,255,0.08); }
+    #play-btn.playing { border-color: #3fb950; background: rgba(63,185,80,0.08); }
+    #status { font-size: 12px; color: #7d8590; letter-spacing: 0.1em; }
+    .controls { display: flex; flex-direction: column; gap: 16px; width: 320px; }
+    .control-row { display: flex; align-items: center; gap: 12px; }
+    .control-row label { font-size: 11px; color: #7d8590; letter-spacing: 0.06em; width: 120px; flex-shrink: 0; }
+    .control-row input[type="range"] { flex: 1; accent-color: #58a6ff; }
+    .control-row span { font-size: 11px; color: #e6edf3; width: 52px; text-align: right; }
+    .divider { width: 320px; height: 1px; background: #21262d; }
+    .note { font-size: 11px; color: #484f58; max-width: 320px; line-height: 1.7; }
+    code { color: #7d8590; }
+  </style>
+</head>
+<body>
+  <a class="back" href="index.html">← back</a>
+  <h1>Part I — Babbling Brook</h1>
+  <button id="play-btn">▶</button>
+  <span id="status">stopped</span>
+
+  <div class="controls">
+    <div class="control-row">
+      <label>Audio LPF cutoff</label>
+      <input type="range" id="lpf1" min="50" max="2000" value="400" step="10" />
+      <span id="lpf1-val">400 Hz</span>
+    </div>
+    <div class="control-row">
+      <label>Mod LPF cutoff</label>
+      <input type="range" id="lpf2" min="1" max="60" value="14" step="1" />
+      <span id="lpf2-val">14 Hz</span>
+    </div>
+    <div class="control-row">
+      <label>Freq mod depth</label>
+      <input type="range" id="modDepth" min="0" max="1000" value="400" step="10" />
+      <span id="modDepth-val">400 Hz</span>
+    </div>
+    <div class="control-row">
+      <label>Freq base</label>
+      <input type="range" id="freqBase" min="100" max="2000" value="500" step="10" />
+      <span id="freqBase-val">500 Hz</span>
+    </div>
+    <div class="control-row">
+      <label>RHPF Q</label>
+      <input type="range" id="rhpfQ" min="0.001" max="1" value="0.03" step="0.001" />
+      <span id="rhpfQ-val">0.030</span>
+    </div>
+    <div class="control-row">
+      <label>Output gain</label>
+      <input type="range" id="gain" min="0" max="1" value="0.1" step="0.01" />
+      <span id="gain-val">0.10</span>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+  <p class="note">
+    SuperCollider original:<br>
+    <code>{RHPF.ar(LPF.ar(BrownNoise.ar(), 400), LPF.ar(BrownNoise.ar(), 14) * 400 + 500, 0.03, 0.1)}.play</code>
+  </p>
+
+  <script>
+    let audioCtx = null;
+    let audioLPF, modLPF, modGain, constSrc, rhpf, outputGain;
+    let isPlaying = false;
+
+    function createBrownNoise(ctx) {
+      const bufferSize  = 10 * ctx.sampleRate;
+      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const output      = noiseBuffer.getChannelData(0);
+      let lastOut = 0;
+      for (let i = 0; i < bufferSize; i++) {
+        const brown = Math.random() * 2 - 1;
+        output[i] = (lastOut + (0.02 * brown)) / 1.02;
+        lastOut = output[i];
+        output[i] *= 3.5;
+      }
+      const source = ctx.createBufferSource();
+      source.buffer = noiseBuffer;
+      source.loop = true;
+      source.start(0);
+      return source;
+    }
+
+    function startAudio() {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      const lpf1Val     = parseFloat(document.getElementById('lpf1').value);
+      const lpf2Val     = parseFloat(document.getElementById('lpf2').value);
+      const modDepthVal = parseFloat(document.getElementById('modDepth').value);
+      const freqBaseVal = parseFloat(document.getElementById('freqBase').value);
+      const rhpfQVal    = parseFloat(document.getElementById('rhpfQ').value);
+      const gainVal     = parseFloat(document.getElementById('gain').value);
+
+      const brownNoise1 = createBrownNoise(audioCtx);
+
+      audioLPF = audioCtx.createBiquadFilter();
+      audioLPF.type = 'lowpass';
+      audioLPF.frequency.value = lpf1Val;
+
+      rhpf = audioCtx.createBiquadFilter();
+      rhpf.type = 'highpass';
+      rhpf.frequency.value = 0;
+      rhpf.Q.value = rhpfQVal;
+
+      outputGain = audioCtx.createGain();
+      outputGain.gain.value = gainVal;
+
+      brownNoise1.connect(audioLPF);
+      audioLPF.connect(rhpf);
+      rhpf.connect(outputGain);
+      outputGain.connect(audioCtx.destination);
+
+      const brownNoise2 = createBrownNoise(audioCtx);
+
+      modLPF = audioCtx.createBiquadFilter();
+      modLPF.type = 'lowpass';
+      modLPF.frequency.value = lpf2Val;
+
+      modGain = audioCtx.createGain();
+      modGain.gain.value = modDepthVal;
+
+      constSrc = audioCtx.createConstantSource();
+      constSrc.offset.value = freqBaseVal;
+      constSrc.start();
+
+      brownNoise2.connect(modLPF);
+      modLPF.connect(modGain);
+      modGain.connect(rhpf.frequency);
+      constSrc.connect(rhpf.frequency);
+    }
+
+    function stopAudio() {
+      if (audioCtx) { audioCtx.close(); audioCtx = null; }
+      audioLPF = modLPF = modGain = constSrc = rhpf = outputGain = null;
+    }
+
+    const btn    = document.getElementById('play-btn');
+    const status = document.getElementById('status');
+
+    btn.addEventListener('click', () => {
+      if (!isPlaying) {
+        startAudio();
+        isPlaying = true;
+        btn.textContent = '■';
+        btn.classList.add('playing');
+        status.textContent = 'playing';
+      } else {
+        stopAudio();
+        isPlaying = false;
+        btn.textContent = '▶';
+        btn.classList.remove('playing');
+        status.textContent = 'stopped';
+      }
+    });
+
+    function bindSlider(id, displayId, format, onchange) {
+      const slider  = document.getElementById(id);
+      const display = document.getElementById(displayId);
+      slider.addEventListener('input', () => {
+        const val = parseFloat(slider.value);
+        display.textContent = format(val);
+        if (isPlaying) onchange(val);
+      });
+    }
+
+    bindSlider('lpf1',     'lpf1-val',     v => v + ' Hz',    v => { if (audioLPF)    audioLPF.frequency.value = v; });
+    bindSlider('lpf2',     'lpf2-val',     v => v + ' Hz',    v => { if (modLPF)      modLPF.frequency.value = v; });
+    bindSlider('modDepth', 'modDepth-val', v => v + ' Hz',    v => { if (modGain)     modGain.gain.value = v; });
+    bindSlider('freqBase', 'freqBase-val', v => v + ' Hz',    v => { if (constSrc)    constSrc.offset.value = v; });
+    bindSlider('rhpfQ',    'rhpfQ-val',    v => v.toFixed(3), v => { if (rhpf)        rhpf.Q.value = v; });
+    bindSlider('gain',     'gain-val',     v => v.toFixed(2), v => { if (outputGain)  outputGain.gain.value = v; });
+  </script>
+</body>
+</html>

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Part II – Rain</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 28px;
+      padding: 40px;
+    }
+    .back { align-self: flex-start; font-size: 11px; color: #7d8590; text-decoration: none; letter-spacing: 0.08em; }
+    .back:hover { color: #58a6ff; }
+    h1 { font-size: 13px; letter-spacing: 0.15em; text-transform: uppercase; color: #7d8590; font-weight: 400; }
+    #play-btn {
+      width: 80px; height: 80px; border-radius: 50%;
+      border: 1.5px solid #30363d; background: transparent;
+      color: #e6edf3; font-size: 22px; cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #play-btn:hover { border-color: #58a6ff; background: rgba(88,166,255,0.08); }
+    #play-btn.playing { border-color: #3fb950; background: rgba(63,185,80,0.08); }
+    #status { font-size: 12px; color: #7d8590; letter-spacing: 0.1em; }
+    .controls { display: flex; flex-direction: column; gap: 16px; width: 320px; }
+    .control-row { display: flex; align-items: center; gap: 12px; }
+    .control-row label { font-size: 11px; color: #7d8590; letter-spacing: 0.06em; width: 130px; flex-shrink: 0; }
+    .control-row input[type="range"] { flex: 1; accent-color: #58a6ff; }
+    .control-row span { font-size: 11px; color: #e6edf3; width: 52px; text-align: right; }
+    .section-label { font-size: 10px; color: #484f58; letter-spacing: 0.12em; text-transform: uppercase; }
+    .divider { width: 320px; height: 1px; background: #21262d; }
+  </style>
+</head>
+<body>
+  <a class="back" href="index.html">← back</a>
+  <h1>Part II — Rain / Water Drops</h1>
+  <button id="play-btn">▶</button>
+  <span id="status">stopped</span>
+
+  <div class="controls">
+
+    <div class="section-label">drop layer</div>
+
+    <div class="control-row">
+      <label>Drop rate (drops/s)</label>
+      <input type="range" id="dropRate" min="1" max="100" value="30" step="1" />
+      <span id="dropRate-val">30</span>
+    </div>
+    <div class="control-row">
+      <label>Drop freq</label>
+      <input type="range" id="dropFreq" min="500" max="5000" value="2000" step="50" />
+      <span id="dropFreq-val">2000 Hz</span>
+    </div>
+    <div class="control-row">
+      <label>Drop decay (ms)</label>
+      <input type="range" id="dropDecay" min="5" max="200" value="40" step="5" />
+      <span id="dropDecay-val">40 ms</span>
+    </div>
+    <div class="control-row">
+      <label>Drop gain</label>
+      <input type="range" id="dropGain" min="0" max="1" value="0.4" step="0.01" />
+      <span id="dropGain-val">0.40</span>
+    </div>
+
+    <div class="divider"></div>
+    <div class="section-label">background noise layer</div>
+
+    <div class="control-row">
+      <label>Noise LPF cutoff</label>
+      <input type="range" id="noiseLPF" min="200" max="8000" value="2000" step="100" />
+      <span id="noiseLPF-val">2000 Hz</span>
+    </div>
+    <div class="control-row">
+      <label>Noise gain</label>
+      <input type="range" id="noiseGain" min="0" max="0.3" value="0.08" step="0.005" />
+      <span id="noiseGain-val">0.080</span>
+    </div>
+
+  </div>
+
+  <script>
+    // ─── Rain synthesis approach ────────────────────────────────────────────────
+    // Rain has two perceptual layers:
+    //   1. Individual drops — each drop is a short filtered noise burst (white noise
+    //      shaped with a fast attack / exponential decay envelope, band-passed around
+    //      a center frequency). Drops are triggered at random intervals by a scheduler.
+    //   2. Background wash — at higher densities the individual drops blur into a
+    //      continuous noise floor. We model this with a low-pass filtered white noise
+    //      node at low gain.
+    //
+    // Reference: Farnell, Designing Sound, Ch. 27 (Rain / Water)
+
+    let audioCtx  = null;
+    let noiseNode = null;
+    let noiseLPFNode = null;
+    let noiseGainNode = null;
+    let schedulerTimer = null;
+    let isPlaying = false;
+
+    // ─── White noise buffer ───────────────────────────────────────────────────
+    function createWhiteNoiseBuffer(ctx, seconds) {
+      const length = ctx.sampleRate * seconds;
+      const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+      const data   = buffer.getChannelData(0);
+      for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+      return buffer;
+    }
+
+    // ─── Single drop ──────────────────────────────────────────────────────────
+    // Each drop is: WhiteNoiseBufferSource → BandPassFilter → GainNode (envelope)
+    function triggerDrop() {
+      if (!audioCtx) return;
+
+      const freq  = parseFloat(document.getElementById('dropFreq').value);
+      const decay = parseFloat(document.getElementById('dropDecay').value) / 1000;
+      const gain  = parseFloat(document.getElementById('dropGain').value);
+
+      // Random per-drop variation so drops don't all sound identical
+      const freqJitter  = freq  * (0.7 + Math.random() * 0.6);  // ±30% freq spread
+      const gainJitter  = gain  * (0.4 + Math.random() * 0.6);  // ±40% gain spread
+      const decayJitter = decay * (0.5 + Math.random() * 1.0);  // ±50% decay spread
+
+      const now = audioCtx.currentTime;
+
+      // Short white noise burst
+      const noiseBuffer = createWhiteNoiseBuffer(audioCtx, decayJitter * 4);
+      const noiseSrc = audioCtx.createBufferSource();
+      noiseSrc.buffer = noiseBuffer;
+
+      // Bandpass filter gives each drop its tonal character
+      const bpf = audioCtx.createBiquadFilter();
+      bpf.type = 'bandpass';
+      bpf.frequency.value = freqJitter;
+      bpf.Q.value = 8;  // fairly tight — drops have a distinct pitch
+
+      // Gain envelope: instant attack, exponential decay
+      const env = audioCtx.createGain();
+      env.gain.setValueAtTime(gainJitter, now);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + decayJitter * 3);
+
+      noiseSrc.connect(bpf);
+      bpf.connect(env);
+      env.connect(audioCtx.destination);
+
+      noiseSrc.start(now);
+      noiseSrc.stop(now + decayJitter * 4);
+    }
+
+    // ─── Drop scheduler ───────────────────────────────────────────────────────
+    // Uses random inter-arrival times (Poisson process) to avoid mechanical regularity
+    function scheduleNextDrop() {
+      if (!isPlaying) return;
+      const rate = parseFloat(document.getElementById('dropRate').value);
+      // Exponential distribution: mean interval = 1/rate seconds
+      const interval = -Math.log(1 - Math.random()) / rate * 1000; // ms
+      triggerDrop();
+      schedulerTimer = setTimeout(scheduleNextDrop, interval);
+    }
+
+    // ─── Start / stop ─────────────────────────────────────────────────────────
+    function startAudio() {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      // Background noise layer
+      const noiseLPFVal  = parseFloat(document.getElementById('noiseLPF').value);
+      const noiseGainVal = parseFloat(document.getElementById('noiseGain').value);
+
+      const bgBuffer = createWhiteNoiseBuffer(audioCtx, 5);
+      noiseNode = audioCtx.createBufferSource();
+      noiseNode.buffer = bgBuffer;
+      noiseNode.loop = true;
+
+      noiseLPFNode = audioCtx.createBiquadFilter();
+      noiseLPFNode.type = 'lowpass';
+      noiseLPFNode.frequency.value = noiseLPFVal;
+
+      noiseGainNode = audioCtx.createGain();
+      noiseGainNode.gain.value = noiseGainVal;
+
+      noiseNode.connect(noiseLPFNode);
+      noiseLPFNode.connect(noiseGainNode);
+      noiseGainNode.connect(audioCtx.destination);
+      noiseNode.start();
+
+      // Start drop scheduler
+      scheduleNextDrop();
+    }
+
+    function stopAudio() {
+      clearTimeout(schedulerTimer);
+      schedulerTimer = null;
+      if (audioCtx) { audioCtx.close(); audioCtx = null; }
+      noiseNode = noiseLPFNode = noiseGainNode = null;
+    }
+
+    // ─── UI ───────────────────────────────────────────────────────────────────
+    const btn    = document.getElementById('play-btn');
+    const status = document.getElementById('status');
+
+    btn.addEventListener('click', () => {
+      if (!isPlaying) {
+        isPlaying = true;
+        startAudio();
+        btn.textContent = '■';
+        btn.classList.add('playing');
+        status.textContent = 'playing';
+      } else {
+        isPlaying = false;
+        stopAudio();
+        btn.textContent = '▶';
+        btn.classList.remove('playing');
+        status.textContent = 'stopped';
+      }
+    });
+
+    function bindSlider(id, displayId, format, onchange) {
+      const slider  = document.getElementById(id);
+      const display = document.getElementById(displayId);
+      slider.addEventListener('input', () => {
+        const val = parseFloat(slider.value);
+        display.textContent = format(val);
+        if (isPlaying && onchange) onchange(val);
+      });
+    }
+
+    // Drop rate and per-drop params are read live each trigger, no need to update nodes
+    bindSlider('dropRate',  'dropRate-val',  v => v,             null);
+    bindSlider('dropFreq',  'dropFreq-val',  v => v + ' Hz',     null);
+    bindSlider('dropDecay', 'dropDecay-val', v => v + ' ms',     null);
+    bindSlider('dropGain',  'dropGain-val',  v => v.toFixed(2),  null);
+
+    bindSlider('noiseLPF',  'noiseLPF-val',  v => v + ' Hz',    v => { if (noiseLPFNode)  noiseLPFNode.frequency.value = v; });
+    bindSlider('noiseGain', 'noiseGain-val', v => v.toFixed(3),  v => { if (noiseGainNode) noiseGainNode.gain.value = v; });
+  </script>
+</body>
+</html>
